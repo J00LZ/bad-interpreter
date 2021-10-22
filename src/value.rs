@@ -29,3 +29,14 @@ impl From<bool> for Value {
         Self::Bool { value }
     }
 }
+
+impl Value {
+    pub fn is_true(&self) -> bool {
+        match self {
+            Value::String { value } => !(value.is_empty() || value.contains("false")),
+            Value::Int { value } => *value == 0,
+            Value::Bool { value } => *value,
+            Value::Nothing => false,
+        }
+    }
+}

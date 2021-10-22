@@ -1,8 +1,8 @@
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 
-use expression::{BinOp, Expression};
+use expression::Expression;
 use value::Value;
-use std::collections::hash_map::Entry;
 
 mod expression;
 mod value;
@@ -65,16 +65,14 @@ impl Interpreter {}
 mod tests {
     use std::collections::HashMap;
 
-    use crate::{BinOp, Env, Environment, Expression, Value};
+    use crate::expression::BinOp;
+    use crate::{Env, Environment, Expression, Value};
 
     struct TestEnv(HashMap<String, Value>);
 
     impl Environment for TestEnv {
         fn get_value(&self, key: String) -> Value {
-            self.0
-                .get(key.as_str())
-                .unwrap_or_else(|| &Value::Nothing)
-                .clone()
+            self.0.get(key.as_str()).unwrap_or(&Value::Nothing).clone()
         }
         fn set_value(&mut self, key: String, value: Value, _: bool) {
             self.0.insert(key, value);
