@@ -1,6 +1,7 @@
-use crate::{Env, Environment, World};
+use crate::environment::Env;
 use crate::instruction::Instruction;
 use crate::value::Value;
+use crate::world::World;
 
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub enum Expression {
@@ -253,11 +254,11 @@ impl Expression {
 
 #[cfg(test)]
 mod tests {
-    use crate::{Env, World};
+    use crate::environment::Env;
     use crate::expression::{BinOp, Expression};
     use crate::instruction::Instruction;
-    use crate::tests::TestEnv;
     use crate::value::Value;
+    use crate::world::World;
 
     #[test]
     fn add_test() {
@@ -349,5 +350,120 @@ mod tests {
                 String::from("kees")
             )]
         );
+    }
+
+    #[test]
+    fn it_works() {
+        let value: Value = String::from("Hello!").into();
+        let expr: Expression = value.into();
+        assert_eq!(
+            expr,
+            Expression::Constant(Value::String(String::from("Hello!")))
+        );
+    }
+
+    #[test]
+    fn add_test_string() {
+        let lhs: Expression = String::from("hello, ").into();
+        let rhs: Expression = String::from("world!").into();
+        let mut w = World {
+            functions: Default::default(),
+            map: Default::default(),
+        };
+        let te = Env::new();
+        let mut instructions: Vec<Instruction> = Vec::new();
+
+        let res = Expression::BinaryOp(lhs.into(), BinOp::Add, rhs.into()).resolve(
+            &te,
+            &mut w,
+            &mut instructions,
+        );
+        assert_eq!(res, Some(String::from("hello, world!").into()))
+    }
+
+    #[test]
+    fn add_test_int() {
+        let lhs: Expression = 10.into();
+        let rhs: Expression = 20.into();
+
+        let mut w = World {
+            functions: Default::default(),
+            map: Default::default(),
+        };
+        let te = Env::new();
+        let mut instructions: Vec<Instruction> = Vec::new();
+
+        let res = Expression::BinaryOp(lhs.into(), BinOp::Add, rhs.into()).resolve(
+            &te,
+            &mut w,
+            &mut instructions,
+        );
+        assert_eq!(res, Some(30.into()))
+    }
+
+    #[test]
+    fn add_test_bool() {
+        let lhs: Expression = true.into();
+        let rhs: Expression = false.into();
+        let mut w = World {
+            functions: Default::default(),
+            map: Default::default(),
+        };
+        let te = Env::new();
+        let mut instructions: Vec<Instruction> = Vec::new();
+
+        let res = Expression::BinaryOp(lhs.into(), BinOp::Add, rhs.into()).resolve(
+            &te,
+            &mut w,
+            &mut instructions,
+        );
+        assert_eq!(res, Some(Value::Nothing))
+    }
+
+    #[test]
+    fn bool_ops_with_bool() {
+        for b1 in [true, false] {
+            for b2 in [true, false] {
+                let lhs: Expression = b1.into();
+                let rhs: Expression = b2.into();
+
+                let mut w = World {
+                    functions: Default::default(),
+                    map: Default::default(),
+                };
+                let te = Env::new();
+                let mut instructions: Vec<Instruction> = Vec::new();
+
+                for op in [BinOp::And, BinOp::Or, BinOp::Xor] {
+                    let correct_val = match op {
+                        BinOp::And => b1 & b2,
+                        BinOp::Or => b1 | b2,
+                        BinOp::Xor => b1 ^ b2,
+                        _ => false,
+                    };
+                    println!("{:?}", op);
+                    let res =
+                        Expression::BinaryOp(lhs.clone().into(), op.clone(), rhs.clone().into())
+                            .resolve(&te, &mut w, &mut instructions);
+
+                    assert_eq!(Some(correct_val.into()), res);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn var_test() {
+        let v = Expression::Var(String::from("x"));
+
+        let mut w = World {
+            functions: Default::default(),
+            map: Default::default(),
+        };
+        let mut te = Env::new();
+        let mut instructions: Vec<Instruction> = Vec::new();
+
+        te.set_value(String::from("x"), 10.into());
+        assert_eq!(v.resolve(&te, &mut w, &mut instructions), Some(10.into()))
     }
 }
