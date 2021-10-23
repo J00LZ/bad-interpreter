@@ -1,3 +1,5 @@
+use std::cmp::Ordering;
+
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub enum Value {
     String(String),
@@ -37,6 +39,41 @@ impl Value {
             Value::Int(value) => *value == 0,
             Value::Bool(value) => *value,
             Value::Nothing => false,
+        }
+    }
+}
+
+impl PartialOrd for Value {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        match self {
+            Value::String(s1) => {
+                if let Value::String(s2) = other {
+                    Some(s1.cmp(s2))
+                } else {
+                    None
+                }
+            }
+            Value::Int(i1) => {
+                if let Value::Int(i2) = other {
+                    Some(i1.cmp(i2))
+                } else {
+                    None
+                }
+            }
+            Value::Bool(b1) => {
+                if let Value::Bool(b2) = other {
+                    Some(b1.cmp(b2))
+                } else {
+                    None
+                }
+            }
+            Value::Nothing => {
+                if let Value::Nothing = other {
+                    Some(Ordering::Equal)
+                } else {
+                    None
+                }
+            }
         }
     }
 }
