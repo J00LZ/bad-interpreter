@@ -36,9 +36,8 @@ impl<'a> Environment for Env<'a> {
             if let Entry::Occupied(mut e) = env.map.entry(key.clone()) {
                 e.insert(value);
                 return;
-            } else {
-                e = env.parent;
             }
+            e = env.parent;
         }
         self.map.insert(key, value);
     }

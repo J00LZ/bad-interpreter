@@ -52,16 +52,12 @@ impl Expression {
             Expression::BinaryOp(lhs, op, rhs) => Expression::bin_op(lhs, op, rhs, env),
             Expression::UnaryOp(op, rhs) => match op {
                 UnOp::Negate => match rhs.resolve(env)? {
-                    Value::String(_) => Value::Nothing.into(),
                     Value::Int(value) => Value::Int(-value).into(),
-                    Value::Bool(_) => Value::Nothing.into(),
-                    Value::Nothing => Value::Nothing.into(),
+                    Value::Nothing | Value::String(_) | Value::Bool(_) => Value::Nothing.into(),
                 },
                 UnOp::Not => match rhs.resolve(env)? {
-                    Value::String(_) => Value::Nothing.into(),
-                    Value::Int(_) => Value::Nothing.into(),
                     Value::Bool(value) => Value::Bool(!value).into(),
-                    Value::Nothing => Value::Nothing.into(),
+                    Value::String(_) | Value::Int(_) | Value::Nothing => Value::Nothing.into(),
                 },
             },
             Expression::Call(_, _) => Value::default().into(),
@@ -94,18 +90,13 @@ impl Expression {
                 env,
             ),
 
-            BinOp::Eq => Expression::equality(lhs, rhs, env),
-            BinOp::Neq => Expression::equality(lhs, rhs, env).map(|x| {
-                if let Value::Bool(y) = x {
-                    (!y).into()
-                } else {
-                    x
-                }
-            }),
-            BinOp::Lt => Value::default().into(),
-            BinOp::Gt => Value::default().into(),
-            BinOp::Lte => Value::default().into(),
-            BinOp::Gte => Value::default().into(),
+            BinOp::Eq => Some((lhs.resolve(env)? == rhs.resolve(env)?).into()),
+            BinOp::Neq => Some((lhs.resolve(env)? != rhs.resolve(env)?).into()),
+
+            BinOp::Lt => Some((lhs.resolve(env)? < rhs.resolve(env)?).into()),
+            BinOp::Gt => Some((lhs.resolve(env)? > rhs.resolve(env)?).into()),
+            BinOp::Lte => Some((lhs.resolve(env)? <= rhs.resolve(env)?).into()),
+            BinOp::Gte => Some((lhs.resolve(env)? >= rhs.resolve(env)?).into()),
 
             BinOp::And | BinOp::Or | BinOp::Xor => Expression::logics(lhs, op, rhs, env),
         }
@@ -176,39 +167,6 @@ impl Expression {
                 _ => Value::default().into(),
             },
             _ => Value::default().into(),
-        }
-    }
-
-    fn equality(lhs: &Expression, rhs: &Expression, env: &dyn Environment) -> Option<Value> {
-        match lhs.resolve(env)? {
-            Value::String(s) => {
-                if let Value::String(s2) = rhs.resolve(env)? {
-                    Some((s == s2).into())
-                } else {
-                    Some(false.into())
-                }
-            }
-            Value::Int(i) => {
-                if let Value::Int(j) = rhs.resolve(env)? {
-                    Some((j == i).into())
-                } else {
-                    Some(false.into())
-                }
-            }
-            Value::Bool(b) => {
-                if let Value::Bool(c) = rhs.resolve(env)? {
-                    Some((b == c).into())
-                } else {
-                    Some(false.into())
-                }
-            }
-            Value::Nothing => {
-                if let Value::Nothing = rhs.resolve(env)? {
-                    Some(true.into())
-                } else {
-                    Some(false.into())
-                }
-            }
         }
     }
 
