@@ -1,18 +1,29 @@
+use std::collections::HashMap;
+use std::fmt::Debug;
+
 use crate::environment::Env;
 use crate::instruction::Instruction;
+use crate::interpreter;
+use crate::statement::Func;
 use crate::value::Value;
 use crate::world::World;
 
 #[derive(Debug, Eq, PartialEq, Clone)]
-pub enum Expression {
-    Constant(Value),
+pub enum Expression<V>
+where
+    V: Eq + PartialEq + PartialOrd + Debug + Clone,
+{
+    Constant(Value<V>),
     Var(String),
-    BinaryOp(Box<Expression>, BinOp, Box<Expression>),
-    UnaryOp(UnOp, Box<Expression>),
-    Call(String, Vec<Expression>),
+    BinaryOp(Box<Expression<V>>, BinOp, Box<Expression<V>>),
+    UnaryOp(UnOp, Box<Expression<V>>),
+    Call(String, Vec<Expression<V>>),
 }
 
-impl<T: Into<Value>> From<T> for Expression {
+impl<T: Into<Value<V>>, V> From<T> for Expression<V>
+where
+    V: Eq + PartialOrd + Debug + Clone,
+{
     fn from(v: T) -> Self {
         Self::Constant(v.into())
     }
@@ -43,60 +54,105 @@ pub enum UnOp {
     Not,
 }
 
-impl Expression {
-    pub fn resolve(
+impl<V> Expression<V>
+where
+    V: Eq + PartialOrd + Debug + Clone,
+{
+    pub fn resolve<T>(
         &self,
-        env: &Env,
-        world: &mut World,
+        env: &Env<V>,
+        world: &mut World<T, V>,
         instructions: &mut Vec<Instruction>,
-    ) -> Option<Value> {
+        mut functions: HashMap<String, Func<V>>,
+    ) -> Option<Value<V>> {
         match self {
             Expression::Constant(x) => {
                 println!("Resolving a {:?}", x);
-                x.clone().into()
+                Some(x.clone())
             }
-            Expression::Var(key) => env.get_value(key.clone()),
+            Expression::Var(key) => {
+                let (n, mut instrs) = world.get(key.clone());
+                instructions.append(&mut instrs);
+                if let Some(n) = n {
+                    return Some(n);
+                }
+                env.get_value_rec(key.clone())
+            }
             Expression::BinaryOp(lhs, op, rhs) => {
-                Expression::bin_op(lhs, op, rhs, env, world, instructions)
+                Expression::bin_op(lhs, op, rhs, env, world, instructions, functions)
             }
             Expression::UnaryOp(op, rhs) => match op {
-                UnOp::Negate => match rhs.resolve(env, world, instructions)? {
+                UnOp::Negate => match rhs.resolve(env, world, instructions, functions)? {
                     Value::Int(value) => Value::Int(-value).into(),
-                    Value::Nothing | Value::String(_) | Value::Bool(_) => Value::Nothing.into(),
+                    Value::Nothing | Value::String(_) | Value::Bool(_) | Value::Custom(_) => {
+                        Value::Nothing.into()
+                    }
                 },
-                UnOp::Not => match rhs.resolve(env, world, instructions)? {
+                UnOp::Not => match rhs.resolve(env, world, instructions, functions)? {
                     Value::Bool(value) => Value::Bool(!value).into(),
-                    Value::String(_) | Value::Int(_) | Value::Nothing => Value::Nothing.into(),
+                    Value::String(_) | Value::Int(_) | Value::Nothing | Value::Custom(_) => {
+                        Value::Nothing.into()
+                    }
                 },
             },
             Expression::Call(name, params) => {
                 let mut a = Vec::new();
                 for param in params {
-                    let p = param.resolve(env, world, instructions)?;
+                    let p = param.resolve(env, world, instructions, functions.clone())?;
                     a.push(p);
                 }
-                let func = world.functions.get(name)?;
-                let (val, mut instrs) = func(world, a);
-                instructions.append(&mut instrs);
-                val.into()
+                let f = functions.get(name).cloned();
+                println!(
+                    "{}: {:?}, {:?}",
+                    name,
+                    f.is_some(),
+                    functions.keys().collect::<Vec<_>>()
+                );
+                if let Some(f) = f {
+                    let mut enn = env.child();
+                    for (n, v) in f.params.iter().zip(a) {
+                        enn.set_value(n.clone(), v)
+                    }
+                    interpreter::interpret_part_2(
+                        world,
+                        enn,
+                        f.statements,
+                        instructions,
+                        &mut functions,
+                    )
+                } else {
+                    let func = world.functions.get(name)?;
+                    let (val, mut instrs) = func(&mut world.t, a);
+                    instructions.append(&mut instrs);
+                    val.into()
+                }
             }
         }
     }
 
-    fn bin_op(
-        lhs: &Expression,
+    fn bin_op<T>(
+        lhs: &Expression<V>,
         op: &BinOp,
-        rhs: &Expression,
-        env: &Env,
-        world: &mut World,
+        rhs: &Expression<V>,
+        env: &Env<V>,
+        world: &mut World<T, V>,
         instructions: &mut Vec<Instruction>,
-    ) -> Option<Value> {
+        functions: HashMap<String, Func<V>>,
+    ) -> Option<Value<V>> {
         match op {
-            BinOp::Add => Expression::add(lhs, rhs, env, world, instructions),
-            BinOp::Subtract => Expression::maths(lhs, |a, b| a - b, rhs, env, world, instructions),
-            BinOp::Multiply => Expression::maths(lhs, |a, b| a * b, rhs, env, world, instructions),
-            BinOp::Divide => Expression::maths(lhs, |a, b| a / b, rhs, env, world, instructions),
-            BinOp::Mod => Expression::maths(lhs, |a, b| a % b, rhs, env, world, instructions),
+            BinOp::Add => Expression::add(lhs, rhs, env, world, instructions, functions),
+            BinOp::Subtract => {
+                Expression::maths(lhs, |a, b| a - b, rhs, env, world, instructions, functions)
+            }
+            BinOp::Multiply => {
+                Expression::maths(lhs, |a, b| a * b, rhs, env, world, instructions, functions)
+            }
+            BinOp::Divide => {
+                Expression::maths(lhs, |a, b| a / b, rhs, env, world, instructions, functions)
+            }
+            BinOp::Mod => {
+                Expression::maths(lhs, |a, b| a % b, rhs, env, world, instructions, functions)
+            }
             BinOp::Power => Expression::maths(
                 lhs,
                 |a, b| {
@@ -111,54 +167,58 @@ impl Expression {
                 env,
                 world,
                 instructions,
+                functions,
             ),
 
             BinOp::Eq => Some(
-                (lhs.resolve(env, world, instructions)?
-                    == rhs.resolve(env, world, instructions)?)
+                (lhs.resolve(env, world, instructions, functions.clone())?
+                    == rhs.resolve(env, world, instructions, functions)?)
                 .into(),
             ),
             BinOp::Neq => Some(
-                (lhs.resolve(env, world, instructions)?
-                    != rhs.resolve(env, world, instructions)?)
+                (lhs.resolve(env, world, instructions, functions.clone())?
+                    != rhs.resolve(env, world, instructions, functions)?)
                 .into(),
             ),
 
             BinOp::Lt => Some(
-                (lhs.resolve(env, world, instructions)? < rhs.resolve(env, world, instructions)?)
-                    .into(),
+                (lhs.resolve(env, world, instructions, functions.clone())?
+                    < rhs.resolve(env, world, instructions, functions)?)
+                .into(),
             ),
             BinOp::Gt => Some(
-                (lhs.resolve(env, world, instructions)? > rhs.resolve(env, world, instructions)?)
-                    .into(),
+                (lhs.resolve(env, world, instructions, functions.clone())?
+                    > rhs.resolve(env, world, instructions, functions)?)
+                .into(),
             ),
             BinOp::Lte => Some(
-                (lhs.resolve(env, world, instructions)?
-                    <= rhs.resolve(env, world, instructions)?)
+                (lhs.resolve(env, world, instructions, functions.clone())?
+                    <= rhs.resolve(env, world, instructions, functions)?)
                 .into(),
             ),
             BinOp::Gte => Some(
-                (lhs.resolve(env, world, instructions)?
-                    >= rhs.resolve(env, world, instructions)?)
+                (lhs.resolve(env, world, instructions, functions.clone())?
+                    >= rhs.resolve(env, world, instructions, functions)?)
                 .into(),
             ),
 
             BinOp::And | BinOp::Or | BinOp::Xor => {
-                Expression::logics(lhs, op, rhs, env, world, instructions)
+                Expression::logics(lhs, op, rhs, env, world, instructions, functions)
             }
         }
     }
 
-    fn add(
-        lhs: &Expression,
-        rhs: &Expression,
-        env: &Env,
-        world: &mut World,
+    fn add<T>(
+        lhs: &Expression<V>,
+        rhs: &Expression<V>,
+        env: &Env<V>,
+        world: &mut World<T, V>,
         instructions: &mut Vec<Instruction>,
-    ) -> Option<Value> {
-        return match lhs.resolve(env, world, instructions)? {
+        functions: HashMap<String, Func<V>>,
+    ) -> Option<Value<V>> {
+        return match lhs.resolve(env, world, instructions, functions.clone())? {
             Value::String(s) => {
-                let rhs = rhs.resolve(env, world, instructions)?;
+                let rhs = rhs.resolve(env, world, instructions, functions)?;
                 Some(if let Value::String(s2) = rhs {
                     format!("{}{}", s, s2).into()
                 } else if let Value::Int(i) = rhs {
@@ -168,7 +228,7 @@ impl Expression {
                 })
             }
             Value::Int(i) => Some(
-                if let Value::Int(i2) = rhs.resolve(env, world, instructions)? {
+                if let Value::Int(i2) = rhs.resolve(env, world, instructions, functions)? {
                     (i + i2).into()
                 } else {
                     Value::Nothing
@@ -178,21 +238,24 @@ impl Expression {
         };
     }
 
-    fn logics(
-        lhs: &Expression,
+    fn logics<T>(
+        lhs: &Expression<V>,
         op: &BinOp,
-        rhs: &Expression,
-        env: &Env,
-        world: &mut World,
+        rhs: &Expression<V>,
+        env: &Env<V>,
+        world: &mut World<T, V>,
         instructions: &mut Vec<Instruction>,
-    ) -> Option<Value> {
-        match lhs.resolve(env, world, instructions)? {
+        functions: HashMap<String, Func<V>>,
+    ) -> Option<Value<V>> {
+        match lhs.resolve(env, world, instructions, functions.clone())? {
             Value::Bool(value) => match op {
                 BinOp::And => Some(
                     {
                         if !value {
                             false
-                        } else if let Value::Bool(v2) = rhs.resolve(env, world, instructions)? {
+                        } else if let Value::Bool(v2) =
+                            rhs.resolve(env, world, instructions, functions)?
+                        {
                             v2
                         } else {
                             false
@@ -204,7 +267,9 @@ impl Expression {
                     {
                         if value {
                             true
-                        } else if let Value::Bool(v2) = rhs.resolve(env, world, instructions)? {
+                        } else if let Value::Bool(v2) =
+                            rhs.resolve(env, world, instructions, functions)?
+                        {
                             v2
                         } else {
                             false
@@ -214,7 +279,7 @@ impl Expression {
                 ),
                 BinOp::Xor => Some(
                     {
-                        if let Value::Bool(v2) = rhs.resolve(env, world, instructions)? {
+                        if let Value::Bool(v2) = rhs.resolve(env, world, instructions, functions)? {
                             value ^ v2
                         } else {
                             false
@@ -228,20 +293,21 @@ impl Expression {
         }
     }
 
-    fn maths<F>(
-        lhs: &Expression,
+    fn maths<F, T>(
+        lhs: &Expression<V>,
         op: F,
-        rhs: &Expression,
-        env: &Env,
-        world: &mut World,
+        rhs: &Expression<V>,
+        env: &Env<V>,
+        world: &mut World<T, V>,
         instructions: &mut Vec<Instruction>,
-    ) -> Option<Value>
+        functions: HashMap<String, Func<V>>,
+    ) -> Option<Value<V>>
     where
         F: FnOnce(i64, i64) -> i64,
     {
-        match lhs.resolve(env, world, instructions)? {
+        match lhs.resolve(env, world, instructions, functions.clone())? {
             Value::Int(value) => {
-                if let Value::Int(v2) = rhs.resolve(env, world, instructions)? {
+                if let Value::Int(v2) = rhs.resolve(env, world, instructions, functions)? {
                     Some((op(value, v2)).into())
                 } else {
                     Value::default().into()
@@ -257,61 +323,52 @@ mod tests {
     use crate::environment::Env;
     use crate::expression::{BinOp, Expression};
     use crate::instruction::Instruction;
-    use crate::value::Value;
+    use crate::value::{NoCustom, Value};
     use crate::world::World;
 
     #[test]
     fn add_test() {
-        let lhs: Expression = 5.into();
-        let rhs: Expression = 10.into();
+        let lhs: Expression<NoCustom> = 5.into();
+        let rhs: Expression<NoCustom> = 10.into();
         let op = Expression::BinaryOp(lhs.into(), BinOp::Add, rhs.into());
 
-        let mut w = World {
-            functions: Default::default(),
-            map: Default::default(),
-        };
+        let mut w = World::new(0);
         let te = Env::new();
         let mut instructions: Vec<Instruction> = Vec::new();
         let res = op
-            .resolve(&te, &mut w, &mut instructions)
+            .resolve(&te, &mut w, &mut instructions, Default::default())
             .expect("This should work");
         assert_eq!(res, 15.into())
     }
 
     #[test]
     fn eq_test() {
-        let lhs: Expression = 5.into();
-        let rhs: Expression = 10.into();
+        let lhs: Expression<NoCustom> = 5.into();
+        let rhs: Expression<NoCustom> = 10.into();
         let op = Expression::BinaryOp(lhs.into(), BinOp::Eq, rhs.into());
 
-        let mut w = World {
-            functions: Default::default(),
-            map: Default::default(),
-        };
+        let mut w = World::new(0);
         let te = Env::new();
         let mut instructions: Vec<Instruction> = Vec::new();
 
         let res = op
-            .resolve(&te, &mut w, &mut instructions)
+            .resolve(&te, &mut w, &mut instructions, Default::default())
             .expect("This should work");
         assert_eq!(res, false.into())
     }
 
     #[test]
     fn neq_test() {
-        let lhs: Expression = 5.into();
-        let rhs: Expression = 10.into();
+        let lhs: Expression<NoCustom> = 5.into();
+        let rhs: Expression<NoCustom> = 10.into();
         let op = Expression::BinaryOp(lhs.into(), BinOp::Neq, rhs.into());
 
-        let mut w = World {
-            functions: Default::default(),
-            map: Default::default(),
-        };
+        let mut w = World::new(0);
         let te = Env::new();
         let mut instructions: Vec<Instruction> = Vec::new();
 
         let res = op
-            .resolve(&te, &mut w, &mut instructions)
+            .resolve(&te, &mut w, &mut instructions, Default::default())
             .expect("This should work");
         assert_eq!(res, true.into())
     }
@@ -320,15 +377,11 @@ mod tests {
     fn call_test() {
         let op = Expression::Call(String::from("test"), vec![]);
 
-        let mut w = World {
-            functions: Default::default(),
-            map: Default::default(),
-        };
-        w.functions.insert(String::from("test"), |a, b| {
+        let mut w: World<i64, NoCustom> = World::new(0);
+        w.functions.insert(String::from("test"), |a, _b| {
+            *a += 10;
             (
-                a.map
-                    .insert(String::from("foo"), 10.into())
-                    .unwrap_or(Value::Nothing),
+                Value::Nothing,
                 vec![Instruction::Instruction(
                     String::from("test"),
                     String::from("kees"),
@@ -339,23 +392,23 @@ mod tests {
         let mut instructions: Vec<Instruction> = Vec::new();
 
         let res = op
-            .resolve(&te, &mut w, &mut instructions)
+            .resolve(&te, &mut w, &mut instructions, Default::default())
             .expect("This should work");
         assert_eq!(res, Value::Nothing);
-        assert_eq!(w.map.get("foo").cloned(), Some(10.into()));
+        assert_eq!(w.t, 10);
         assert_eq!(
             instructions,
             vec![Instruction::Instruction(
                 String::from("test"),
-                String::from("kees")
+                String::from("kees"),
             )]
         );
     }
 
     #[test]
     fn it_works() {
-        let value: Value = String::from("Hello!").into();
-        let expr: Expression = value.into();
+        let value: Value<NoCustom> = String::from("Hello!").into();
+        let expr: Expression<NoCustom> = value.into();
         assert_eq!(
             expr,
             Expression::Constant(Value::String(String::from("Hello!")))
@@ -364,12 +417,9 @@ mod tests {
 
     #[test]
     fn add_test_string() {
-        let lhs: Expression = String::from("hello, ").into();
-        let rhs: Expression = String::from("world!").into();
-        let mut w = World {
-            functions: Default::default(),
-            map: Default::default(),
-        };
+        let lhs: Expression<NoCustom> = String::from("hello, ").into();
+        let rhs: Expression<NoCustom> = String::from("world!").into();
+        let mut w = World::new(0);
         let te = Env::new();
         let mut instructions: Vec<Instruction> = Vec::new();
 
@@ -377,19 +427,17 @@ mod tests {
             &te,
             &mut w,
             &mut instructions,
+            Default::default(),
         );
         assert_eq!(res, Some(String::from("hello, world!").into()))
     }
 
     #[test]
     fn add_test_int() {
-        let lhs: Expression = 10.into();
-        let rhs: Expression = 20.into();
+        let lhs: Expression<NoCustom> = 10.into();
+        let rhs: Expression<NoCustom> = 20.into();
 
-        let mut w = World {
-            functions: Default::default(),
-            map: Default::default(),
-        };
+        let mut w = World::new(0);
         let te = Env::new();
         let mut instructions: Vec<Instruction> = Vec::new();
 
@@ -397,18 +445,16 @@ mod tests {
             &te,
             &mut w,
             &mut instructions,
+            Default::default(),
         );
         assert_eq!(res, Some(30.into()))
     }
 
     #[test]
     fn add_test_bool() {
-        let lhs: Expression = true.into();
-        let rhs: Expression = false.into();
-        let mut w = World {
-            functions: Default::default(),
-            map: Default::default(),
-        };
+        let lhs: Expression<NoCustom> = true.into();
+        let rhs: Expression<NoCustom> = false.into();
+        let mut w = World::new(0);
         let te = Env::new();
         let mut instructions: Vec<Instruction> = Vec::new();
 
@@ -416,6 +462,7 @@ mod tests {
             &te,
             &mut w,
             &mut instructions,
+            Default::default(),
         );
         assert_eq!(res, Some(Value::Nothing))
     }
@@ -424,13 +471,10 @@ mod tests {
     fn bool_ops_with_bool() {
         for b1 in [true, false] {
             for b2 in [true, false] {
-                let lhs: Expression = b1.into();
-                let rhs: Expression = b2.into();
+                let lhs: Expression<NoCustom> = b1.into();
+                let rhs: Expression<NoCustom> = b2.into();
 
-                let mut w = World {
-                    functions: Default::default(),
-                    map: Default::default(),
-                };
+                let mut w = World::new(0);
                 let te = Env::new();
                 let mut instructions: Vec<Instruction> = Vec::new();
 
@@ -444,7 +488,7 @@ mod tests {
                     println!("{:?}", op);
                     let res =
                         Expression::BinaryOp(lhs.clone().into(), op.clone(), rhs.clone().into())
-                            .resolve(&te, &mut w, &mut instructions);
+                            .resolve(&te, &mut w, &mut instructions, Default::default());
 
                     assert_eq!(Some(correct_val.into()), res);
                 }
@@ -454,16 +498,16 @@ mod tests {
 
     #[test]
     fn var_test() {
-        let v = Expression::Var(String::from("x"));
+        let v: Expression<NoCustom> = Expression::Var(String::from("x"));
 
-        let mut w = World {
-            functions: Default::default(),
-            map: Default::default(),
-        };
+        let mut w = World::new(0);
         let mut te = Env::new();
         let mut instructions: Vec<Instruction> = Vec::new();
 
         te.set_value(String::from("x"), 10.into());
-        assert_eq!(v.resolve(&te, &mut w, &mut instructions), Some(10.into()))
+        assert_eq!(
+            v.resolve(&te, &mut w, &mut instructions, Default::default()),
+            Some(10.into())
+        )
     }
 }

@@ -5,15 +5,23 @@ use std::rc::Rc;
 use crate::value::Value;
 
 #[derive(Debug, PartialEq)]
-pub struct Inner {
-    contents: HashMap<String, Value>,
-    parent: Option<Env>,
+pub struct Inner<V>
+where
+    V: Eq + PartialEq + PartialOrd + Clone,
+{
+    contents: HashMap<String, Value<V>>,
+    parent: Option<Env<V>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct Env(Rc<RefCell<Inner>>);
+pub struct Env<V>(Rc<RefCell<Inner<V>>>)
+where
+    V: Eq + PartialEq + PartialOrd + Clone;
 
-impl Env {
+impl<V> Env<V>
+where
+    V: Eq + PartialEq + PartialOrd + Clone,
+{
     pub fn new() -> Self {
         Self(Rc::new(RefCell::new(Inner {
             contents: Default::default(),
@@ -28,11 +36,11 @@ impl Env {
         })))
     }
 
-    pub fn get_value(&self, key: String) -> Option<Value> {
+    pub fn get_value(&self, key: String) -> Option<Value<V>> {
         self.0.borrow().contents.get(&key).cloned()
     }
 
-    pub fn get_value_rec(&self, key: String) -> Option<Value> {
+    pub fn get_value_rec(&self, key: String) -> Option<Value<V>> {
         if let Some(x) = self.get_value(key.clone()) {
             Some(x)
         } else if let Some(e) = &self.0.borrow().parent {
@@ -42,7 +50,7 @@ impl Env {
         }
     }
 
-    pub fn set_value(&mut self, key: String, value: Value) {
+    pub fn set_value(&mut self, key: String, value: Value<V>) {
         self.0.borrow_mut().contents.insert(key, value);
     }
 }
