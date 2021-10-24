@@ -31,13 +31,24 @@ where
     let mut e = env.child();
     let mut funcs = functions.clone();
     for statement in statements.clone() {
-        if let Statement::FuncDef(name, params, statements) = statement {
+        if let Statement::FuncDef {
+            name: name,
+            params: params,
+            body: statements,
+            id,
+        } = statement
+        {
             funcs.insert(name, Func { params, statements });
         }
     }
     for statement in statements {
         match statement {
-            Statement::Assignment(name, expr, _) => {
+            Statement::Assignment {
+                var_name: name,
+                expression: expr,
+                uses_explicit_var: _,
+                id,
+            } => {
                 let expr = expr.resolve(&e, world, &mut instructions, funcs.clone());
                 if let Some(expr) = expr {
                     if let (Some(_), _) = world.get(name.clone()) {
@@ -48,7 +59,11 @@ where
                     }
                 }
             }
-            Statement::While(expr, body) => {
+            Statement::While {
+                condition: expr,
+                body: body,
+                id,
+            } => {
                 let mut instrs = Vec::new();
                 let mut x = expr
                     .resolve(&(e.clone()), world, &mut instrs, funcs.clone())
@@ -67,12 +82,24 @@ where
                         .unwrap_or(false)
                 }
             }
-            Statement::FuncDef(_, _, _) => {}
-            Statement::Return(expr) => return expr.resolve(&e, world, &mut instructions, funcs),
-            Statement::Expression(expr) => {
+            Statement::FuncDef {
+                name: _,
+                params: _,
+                body: _,
+                id,
+            } => {}
+            Statement::Return { expr, id } => {
+                return expr.resolve(&e, world, &mut instructions, funcs)
+            }
+            Statement::Expression { expr: expr } => {
                 expr.resolve(&e, world, &mut instructions, funcs.clone());
             }
-            Statement::IfElse(expr, if_case, else_case) => {
+            Statement::IfElse {
+                condition: expr,
+                if_case: if_case,
+                else_case: else_case,
+                id,
+            } => {
                 let mut instrs = Vec::new();
                 let x = expr
                     .resolve(&(e.clone()), world, &mut instrs, funcs.clone())
@@ -110,24 +137,47 @@ mod tests {
     #[test]
     fn some_func() {
         let statements = vec![
-            Statement::FuncDef(
-                String::from("test"),
-                Default::default(),
-                vec![
-                    Statement::FuncDef(
-                        String::from("test2"),
-                        Default::default(),
-                        vec![Expression::Call(String::from("test3"), Default::default()).into()],
-                    ),
-                    Expression::Call(String::from("test2"), Default::default()).into(),
+            Statement::FuncDef {
+                name: String::from("test"),
+                params: Default::default(),
+                body: vec![
+                    Statement::FuncDef {
+                        name: String::from("test2"),
+                        params: Default::default(),
+                        body: vec![Expression::Call {
+                            name: String::from("test3"),
+                            params: Default::default(),
+                            id: String::from("id"),
+                        }
+                        .into()],
+                        id: String::from("id"),
+                    },
+                    Expression::Call {
+                        name: String::from("test2"),
+                        params: Default::default(),
+                        id: String::from("id"),
+                    }
+                    .into(),
                 ],
-            ),
-            Statement::FuncDef(
-                String::from("test3"),
-                Default::default(),
-                vec![Expression::Call(String::from("assert"), Default::default()).into()],
-            ),
-            Expression::Call(String::from("test"), Default::default()).into(),
+                id: String::from("id"),
+            },
+            Statement::FuncDef {
+                name: String::from("test3"),
+                params: Default::default(),
+                body: vec![Expression::Call {
+                    name: String::from("assert"),
+                    params: Default::default(),
+                    id: String::from("id"),
+                }
+                .into()],
+                id: String::from("id"),
+            },
+            Expression::Call {
+                name: String::from("test"),
+                params: Default::default(),
+                id: String::from("id"),
+            }
+            .into(),
         ];
         let mut w: World<i64, NoCustom> = World::new(0);
         w.functions.insert(String::from("assert"), |a, _b| {
@@ -147,9 +197,9 @@ mod tests {
             Baz,
         }
 
-        let v = Expression::Constant(Value::Custom(Foo::Bar));
-        let b = Expression::Constant(Value::Custom(Foo::Baz));
-        let mut w: World<i32, Foo> = World::new(10);
+        let v: Expression<_> = Value::Custom(Foo::Bar).into();
+        let b: Expression<_> = Value::Custom(Foo::Baz).into();
+        let mut w: World<_, _> = World::new(10);
         w.functions.insert(String::from("teq"), |_, vec1| {
             let p1 = &vec1[0];
             assert_eq!(p1.clone(), false.into());
@@ -157,10 +207,18 @@ mod tests {
         });
         interpret(
             &mut w,
-            vec![Statement::Expression(Expression::Call(
-                String::from("teq"),
-                vec![Expression::BinaryOp(v.into(), BinOp::Eq, b.into())],
-            ))],
+            vec![Statement::Expression {
+                expr: Expression::Call {
+                    name: String::from("teq"),
+                    params: vec![Expression::BinaryOp {
+                        lhs: v.into(),
+                        op: BinOp::Eq,
+                        rhs: b.into(),
+                        id: String::from("id"),
+                    }],
+                    id: String::from("id"),
+                },
+            }],
         )
     }
 }

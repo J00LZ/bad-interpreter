@@ -1,10 +1,13 @@
 use std::cmp::Ordering;
 use std::fmt::Debug;
 
-#[derive(Debug, Eq, PartialEq, Clone, PartialOrd)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Eq, PartialEq, Clone, PartialOrd, Serialize, Deserialize)]
 pub struct NoCustom;
 
-#[derive(Debug, Eq, PartialEq, Clone)]
+#[derive(Debug, Eq, PartialEq, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", content = "value", rename_all = "snake_case")]
 pub enum Value<V>
 where
     V: Eq + PartialEq + PartialOrd + Clone,
@@ -12,6 +15,7 @@ where
     String(String),
     Int(i64),
     Bool(bool),
+    #[serde(skip_serializing)]
     Custom(V),
     Nothing,
 }
@@ -109,5 +113,17 @@ where
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::value::{NoCustom, Value};
+
+    #[test]
+    fn serialize_deserialize_test() {
+        let f = Value::<NoCustom>::Int(10);
+        let v = serde_json::to_string(&f).unwrap();
+        println!("{}", v)
     }
 }
