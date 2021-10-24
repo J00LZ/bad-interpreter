@@ -1,7 +1,7 @@
-mod environment;
-mod expression;
-mod instruction;
-mod interpreter;
-mod statement;
-mod value;
-mod world;
+pub mod environment;
+pub mod expression;
+pub mod instruction;
+pub mod interpreter;
+pub mod statement;
+pub mod value;
+pub mod world;
