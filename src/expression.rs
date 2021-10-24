@@ -8,16 +8,44 @@ use crate::statement::Func;
 use crate::value::Value;
 use crate::world::World;
 
-#[derive(Debug, Eq, PartialEq, Clone)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Eq, PartialEq, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase", tag = "type")]
 pub enum Expression<V>
 where
     V: Eq + PartialEq + PartialOrd + Debug + Clone,
 {
-    Constant(Value<V>),
-    Var(String),
-    BinaryOp(Box<Expression<V>>, BinOp, Box<Expression<V>>),
-    UnaryOp(UnOp, Box<Expression<V>>),
-    Call(String, Vec<Expression<V>>),
+    Constant {
+        #[serde(rename = "const")]
+        value: Value<V>,
+        #[serde(default)]
+        id: String,
+    },
+    Var {
+        name: String,
+        #[serde(default)]
+        id: String,
+    },
+    BinaryOp {
+        lhs: Box<Expression<V>>,
+        op: BinOp,
+        rhs: Box<Expression<V>>,
+        #[serde(default)]
+        id: String,
+    },
+    UnaryOp {
+        op: UnOp,
+        expression: Box<Expression<V>>,
+        #[serde(default)]
+        id: String,
+    },
+    Call {
+        name: String,
+        params: Vec<Expression<V>>,
+        #[serde(default)]
+        id: String,
+    },
 }
 
 impl<T: Into<Value<V>>, V> From<T> for Expression<V>
@@ -25,11 +53,15 @@ where
     V: Eq + PartialOrd + Debug + Clone,
 {
     fn from(v: T) -> Self {
-        Self::Constant(v.into())
+        Self::Constant {
+            value: v.into(),
+            id: String::from("id"),
+        }
     }
 }
 
-#[derive(Debug, Eq, PartialEq, Clone)]
+#[derive(Debug, Eq, PartialEq, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum BinOp {
     Multiply,
     Divide,
@@ -48,7 +80,8 @@ pub enum BinOp {
     Xor,
 }
 
-#[derive(Debug, Eq, PartialEq, Clone)]
+#[derive(Debug, Eq, PartialEq, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum UnOp {
     Negate,
     Not,
@@ -66,36 +99,36 @@ where
         mut functions: HashMap<String, Func<V>>,
     ) -> Option<Value<V>> {
         match self {
-            Expression::Constant(x) => {
-                println!("Resolving a {:?}", x);
-                Some(x.clone())
+            Expression::Constant { value, id } => {
+                println!("Resolving a {:?}", value);
+                Some(value.clone())
             }
-            Expression::Var(key) => {
-                let (n, mut instrs) = world.get(key.clone());
+            Expression::Var { name, id } => {
+                let (n, mut instrs) = world.get(name.clone());
                 instructions.append(&mut instrs);
                 if let Some(n) = n {
                     return Some(n);
                 }
-                env.get_value_rec(key.clone())
+                env.get_value_rec(name.clone())
             }
-            Expression::BinaryOp(lhs, op, rhs) => {
+            Expression::BinaryOp { lhs, op, rhs, id } => {
                 Expression::bin_op(lhs, op, rhs, env, world, instructions, functions)
             }
-            Expression::UnaryOp(op, rhs) => match op {
-                UnOp::Negate => match rhs.resolve(env, world, instructions, functions)? {
+            Expression::UnaryOp { op, expression, id } => match op {
+                UnOp::Negate => match expression.resolve(env, world, instructions, functions)? {
                     Value::Int(value) => Value::Int(-value).into(),
                     Value::Nothing | Value::String(_) | Value::Bool(_) | Value::Custom(_) => {
                         Value::Nothing.into()
                     }
                 },
-                UnOp::Not => match rhs.resolve(env, world, instructions, functions)? {
+                UnOp::Not => match expression.resolve(env, world, instructions, functions)? {
                     Value::Bool(value) => Value::Bool(!value).into(),
                     Value::String(_) | Value::Int(_) | Value::Nothing | Value::Custom(_) => {
                         Value::Nothing.into()
                     }
                 },
             },
-            Expression::Call(name, params) => {
+            Expression::Call { name, params, id } => {
                 let mut a = Vec::new();
                 for param in params {
                     let p = param.resolve(env, world, instructions, functions.clone())?;
@@ -330,7 +363,12 @@ mod tests {
     fn add_test() {
         let lhs: Expression<NoCustom> = 5.into();
         let rhs: Expression<NoCustom> = 10.into();
-        let op = Expression::BinaryOp(lhs.into(), BinOp::Add, rhs.into());
+        let op = Expression::BinaryOp {
+            lhs: lhs.into(),
+            op: BinOp::Add,
+            rhs: rhs.into(),
+            id: String::from("id"),
+        };
 
         let mut w = World::new(0);
         let te = Env::new();
@@ -345,7 +383,12 @@ mod tests {
     fn eq_test() {
         let lhs: Expression<NoCustom> = 5.into();
         let rhs: Expression<NoCustom> = 10.into();
-        let op = Expression::BinaryOp(lhs.into(), BinOp::Eq, rhs.into());
+        let op = Expression::BinaryOp {
+            lhs: lhs.into(),
+            op: BinOp::Eq,
+            rhs: rhs.into(),
+            id: String::from("id"),
+        };
 
         let mut w = World::new(0);
         let te = Env::new();
@@ -361,7 +404,12 @@ mod tests {
     fn neq_test() {
         let lhs: Expression<NoCustom> = 5.into();
         let rhs: Expression<NoCustom> = 10.into();
-        let op = Expression::BinaryOp(lhs.into(), BinOp::Neq, rhs.into());
+        let op = Expression::BinaryOp {
+            lhs: lhs.into(),
+            op: BinOp::Neq,
+            rhs: rhs.into(),
+            id: String::from("id"),
+        };
 
         let mut w = World::new(0);
         let te = Env::new();
@@ -375,7 +423,11 @@ mod tests {
 
     #[test]
     fn call_test() {
-        let op = Expression::Call(String::from("test"), vec![]);
+        let op = Expression::Call {
+            name: String::from("test"),
+            params: vec![],
+            id: String::from("id"),
+        };
 
         let mut w: World<i64, NoCustom> = World::new(0);
         w.functions.insert(String::from("test"), |a, _b| {
@@ -409,10 +461,7 @@ mod tests {
     fn it_works() {
         let value: Value<NoCustom> = String::from("Hello!").into();
         let expr: Expression<NoCustom> = value.into();
-        assert_eq!(
-            expr,
-            Expression::Constant(Value::String(String::from("Hello!")))
-        );
+        assert_eq!(expr, Value::String(String::from("Hello!")).into());
     }
 
     #[test]
@@ -423,12 +472,13 @@ mod tests {
         let te = Env::new();
         let mut instructions: Vec<Instruction> = Vec::new();
 
-        let res = Expression::BinaryOp(lhs.into(), BinOp::Add, rhs.into()).resolve(
-            &te,
-            &mut w,
-            &mut instructions,
-            Default::default(),
-        );
+        let res = Expression::BinaryOp {
+            lhs: lhs.into(),
+            op: BinOp::Add,
+            rhs: rhs.into(),
+            id: String::from("id"),
+        }
+        .resolve(&te, &mut w, &mut instructions, Default::default());
         assert_eq!(res, Some(String::from("hello, world!").into()))
     }
 
@@ -441,12 +491,13 @@ mod tests {
         let te = Env::new();
         let mut instructions: Vec<Instruction> = Vec::new();
 
-        let res = Expression::BinaryOp(lhs.into(), BinOp::Add, rhs.into()).resolve(
-            &te,
-            &mut w,
-            &mut instructions,
-            Default::default(),
-        );
+        let res = Expression::BinaryOp {
+            lhs: lhs.into(),
+            op: BinOp::Add,
+            rhs: rhs.into(),
+            id: String::from("id"),
+        }
+        .resolve(&te, &mut w, &mut instructions, Default::default());
         assert_eq!(res, Some(30.into()))
     }
 
@@ -458,12 +509,13 @@ mod tests {
         let te = Env::new();
         let mut instructions: Vec<Instruction> = Vec::new();
 
-        let res = Expression::BinaryOp(lhs.into(), BinOp::Add, rhs.into()).resolve(
-            &te,
-            &mut w,
-            &mut instructions,
-            Default::default(),
-        );
+        let res = Expression::BinaryOp {
+            lhs: lhs.into(),
+            op: BinOp::Add,
+            rhs: rhs.into(),
+            id: String::from("id"),
+        }
+        .resolve(&te, &mut w, &mut instructions, Default::default());
         assert_eq!(res, Some(Value::Nothing))
     }
 
@@ -486,9 +538,18 @@ mod tests {
                         _ => false,
                     };
                     println!("{:?}", op);
-                    let res =
-                        Expression::BinaryOp(lhs.clone().into(), op.clone(), rhs.clone().into())
-                            .resolve(&te, &mut w, &mut instructions, Default::default());
+                    let res = Expression::BinaryOp {
+                        lhs: lhs.clone().into(),
+                        op: op.clone(),
+                        rhs: rhs.clone().into(),
+                        id: String::from("id"),
+                    }
+                    .resolve(
+                        &te,
+                        &mut w,
+                        &mut instructions,
+                        Default::default(),
+                    );
 
                     assert_eq!(Some(correct_val.into()), res);
                 }
@@ -498,7 +559,10 @@ mod tests {
 
     #[test]
     fn var_test() {
-        let v: Expression<NoCustom> = Expression::Var(String::from("x"));
+        let v: Expression<NoCustom> = Expression::Var {
+            name: String::from("x"),
+            id: String::from("id"),
+        };
 
         let mut w = World::new(0);
         let mut te = Env::new();
@@ -509,5 +573,25 @@ mod tests {
             v.resolve(&te, &mut w, &mut instructions, Default::default()),
             Some(10.into())
         )
+    }
+
+    #[test]
+    fn serialize_deserialize_test() {
+        let expr = Expression::BinaryOp {
+            lhs: Expression::Constant {
+                value: Value::<NoCustom>::Int(10),
+                id: String::from("id"),
+            }
+            .into(),
+            op: BinOp::Add,
+            rhs: Expression::Constant {
+                value: Value::<NoCustom>::Int(10),
+                id: String::from("id"),
+            }
+            .into(),
+            id: String::from("id"),
+        };
+        let txt = serde_json::to_string(&expr).unwrap();
+        println!("{}", txt);
     }
 }
